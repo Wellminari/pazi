@@ -57,15 +57,26 @@ jobs:
       - name: Verificar código
         run: npm run check
 
-      - name: Gerar instalador (sem publicar)
-        if: github.event_name == 'workflow_dispatch' && !inputs.publicar
+      - name: Gerar instalador
         run: npm run dist
 
-      - name: Gerar e publicar versão
+      - name: Versão do package.json
+        id: versao
+        shell: bash
+        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar versão (atualiza os apps instalados)
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publicar
-        run: npm run release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.versao.outputs.tag }}
+          name: Pazi ${{ steps.versao.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
 
       - name: Guardar instalador para download
         uses: actions/upload-artifact@v4
