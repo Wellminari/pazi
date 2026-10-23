@@ -17,13 +17,23 @@ const cfg = require('./config');
 // Configurações salvas do usuário (tela cheia, iniciar com o Windows)
 // ---------------------------------------------------------------------------
 const settingsFile = () => path.join(app.getPath('userData'), 'pazi-settings.json');
-let settings = { fullscreen: { panel: false, atende: false }, openAtLogin: false };
+let settings = { fullscreen: { panel: false, atende: false }, openAtLogin: true };
 
 function loadSettings() {
   try {
     const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
     settings = { ...settings, ...raw, fullscreen: { ...settings.fullscreen, ...(raw.fullscreen || {}) } };
   } catch { /* primeira execução */ }
+  // "Iniciar com o Windows" vem LIGADO por padrão (aplicado uma única vez;
+  // depois vale a escolha da pessoa no menu do relógio).
+  if (!settings.autostartDefaultApplied) {
+    settings.openAtLogin = true;
+    settings.autostartDefaultApplied = true;
+    saveSettings();
+  }
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: !!settings.openAtLogin, args: [cfg.ARG_HIDDEN] });
+  }
 }
 function saveSettings() {
   try { fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2)); } catch { /* noop */ }
