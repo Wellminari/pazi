@@ -1,7 +1,7 @@
 {
   "name": "pazi-desktop",
   "productName": "Pazi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pazi para Windows — painel e Pazi Atende com som, notificações e impressão direta",
   "author": "Pazinari",
   "main": "src/main.js",
@@ -32,7 +32,8 @@
       "package.json"
     ],
     "extraResources": [
-      { "from": "build/icon.ico", "to": "icon.ico" }
+      { "from": "build/icon.ico", "to": "icon.ico" },
+      { "from": "build/atende.ico", "to": "atende.ico" }
     ],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],

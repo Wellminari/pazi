@@ -1,4 +1,5 @@
 node_modules/
 dist/
-build/icon.png
+build/icon.ico
+build/atende.ico
 *.log

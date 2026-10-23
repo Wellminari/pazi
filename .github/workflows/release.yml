@@ -27,13 +27,20 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Ícone do app
+      - name: Ícones do app (cantos arredondados)
         shell: bash
         run: |
-          if [ ! -f build/icon.ico ]; then
-            curl -fsSL -o build/icon.png https://painel.pazi.app/pwa-icon-v2.png
-            pip install pillow
-            python build/make-icon.py build/icon.png build/icon.ico
+          pip install pillow
+          # Pazi: usa build/pazi.png do repositório; se não existir, baixa a logo do painel
+          if [ ! -f build/pazi.png ]; then
+            curl -fsSL -o build/pazi.png https://painel.pazi.app/pwa-icon-v2.png
+          fi
+          python build/make-icon.py build/pazi.png build/icon.ico
+          # Pazi Atende: usa build/atende.png; se não existir, repete o ícone do Pazi
+          if [ -f build/atende.png ]; then
+            python build/make-icon.py build/atende.png build/atende.ico
+          else
+            cp build/icon.ico build/atende.ico
           fi
 
       - name: Instalar dependências

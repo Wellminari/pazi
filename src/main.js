@@ -43,8 +43,11 @@ if (!app.requestSingleInstanceLock()) {
 
 app.setAppUserModelId(cfg.APP_ID_PANEL);
 
-const iconPath = () =>
-  app.isPackaged ? path.join(process.resourcesPath, 'icon.ico') : path.join(__dirname, '..', 'build', 'icon.ico');
+// Ícones: Pazi (painel e relógio) e Pazi Atende (janela, barra de tarefas e notificações de mensagem)
+const iconPath = (kind = 'panel') => {
+  const file = kind === 'atende' ? 'atende.ico' : 'icon.ico';
+  return app.isPackaged ? path.join(process.resourcesPath, file) : path.join(__dirname, '..', 'build', file);
+};
 
 const windows = { panel: null, atende: null };
 let tray = null;
@@ -77,7 +80,7 @@ function createWindow(kind) {
     minHeight: 500,
     show: false,
     title: isAtende ? 'Pazi Atende' : 'Pazi',
-    icon: iconPath(),
+    icon: iconPath(kind),
     backgroundColor: '#ffffff',
     autoHideMenuBar: true,
     webPreferences: {
@@ -98,7 +101,7 @@ function createWindow(kind) {
   if (process.platform === 'win32') {
     win.setAppDetails({
       appId: isAtende ? cfg.APP_ID_ATENDE : cfg.APP_ID_PANEL,
-      appIconPath: iconPath(),
+      appIconPath: iconPath(kind),
       relaunchCommand: `"${process.execPath}"${isAtende ? ` ${cfg.ARG_ATENDE}` : ''}`,
       relaunchDisplayName: isAtende ? 'Pazi Atende' : 'Pazi',
     });
@@ -131,7 +134,7 @@ function createWindow(kind) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
-          icon: iconPath(),
+          icon: iconPath(kind),
           autoHideMenuBar: true,
           webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -290,7 +293,7 @@ ipcMain.handle('pazi:notify', (event, payload = {}) => {
   const n = new Notification({
     title: String(payload.title || (kind === 'atende' ? 'Nova mensagem' : 'Novo pedido')).slice(0, 120),
     body: String(payload.body || '').slice(0, 300),
-    icon: iconPath(),
+    icon: iconPath(kind),
     silent: true,
   });
   n.on('click', () => {
