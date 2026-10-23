@@ -1,0 +1,59 @@
+# Gera o instalador do Pazi para Windows.
+# - Manual: aba Actions > "Gerar instalador" > Run workflow (gera o .exe para baixar, sem publicar)
+# - Versão nova: criar uma tag v0.1.0, v0.1.1... -> gera e publica em Releases
+#   (o app instalado nos clientes baixa a atualização sozinho a partir daí)
+
+name: Gerar instalador
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Ícone do app
+        shell: bash
+        run: |
+          if [ ! -f build/icon.ico ]; then
+            curl -fsSL -o build/icon.png https://painel.pazi.app/pwa-icon-v2.png
+            pip install pillow
+            python build/make-icon.py build/icon.png build/icon.ico
+          fi
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Verificar código
+        run: npm run check
+
+      - name: Gerar instalador (sem publicar)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run dist
+
+      - name: Gerar e publicar versão
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guardar instalador para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pazi-Setup
+          path: dist/*.exe
