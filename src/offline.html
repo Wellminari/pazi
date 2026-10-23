@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src https://painel.pazi.app" />
+  <title>Pazi — Sem conexão</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+      font-family: "Segoe UI", system-ui, sans-serif; background: #fafafa; color: #18181b;
+    }
+    @media (prefers-color-scheme: dark) { body { background: #18181b; color: #fafafa; } p { color: #a1a1aa !important; } }
+    .box { text-align: center; max-width: 360px; padding: 24px; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; background: #f43f8b; margin: 0 auto 20px; animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: .3; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.1); } }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p { margin: 0 0 20px; color: #52525b; line-height: 1.5; font-size: 14px; }
+    button {
+      border: 0; border-radius: 8px; padding: 10px 20px; font-size: 14px; cursor: pointer;
+      background: #f43f8b; color: #fff; font-family: inherit;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="dot"></div>
+    <h1>Sem conexão com a internet</h1>
+    <p>O Pazi vai reconectar sozinho assim que a internet voltar.<br /><span id="status">Tentando de novo…</span></p>
+    <button id="retry">Tentar agora</button>
+  </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var target = params.get('target') || 'https://painel.pazi.app/';
+      if (target.indexOf('https://painel.pazi.app/') !== 0) target = 'https://painel.pazi.app/';
+      var status = document.getElementById('status');
+      var busy = false;
+
+      function tryReconnect() {
+        if (busy) return;
+        busy = true;
+        status.textContent = 'Verificando a conexão…';
+        fetch('https://painel.pazi.app/manifest.json', { cache: 'no-store', mode: 'no-cors' })
+          .then(function () { location.href = target; })
+          .catch(function () { status.textContent = 'Ainda sem conexão. Nova tentativa em instantes…'; })
+          .then(function () { busy = false; });
+      }
+
+      document.getElementById('retry').addEventListener('click', tryReconnect);
+      window.addEventListener('online', tryReconnect);
+      setInterval(tryReconnect, 5000);
+    })();
+  </script>
+</body>
+</html>

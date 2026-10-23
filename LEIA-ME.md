@@ -32,14 +32,17 @@ if (window.paziDesktop?.isDesktop) {
 }
 ```
 
+## Link fixo para baixar (sempre a versão mais recente)
+https://github.com/Wellminari/pazi/releases/latest/download/Pazi-Setup.exe
+
 ## Como gerar o instalador
 1. No GitHub: aba **Actions** > **Gerar instalador** > **Run workflow**.
 2. Ao terminar, baixe o arquivo **Pazi-Setup** no fim da página da execução.
 
 ## Como lançar uma versão nova (atualiza os clientes sozinho)
-1. Aumente `"version"` no `package.json` (ex.: 0.1.0 → 0.1.1).
-2. Crie a tag igual: `v0.1.1` (Releases > Draft a new release > Choose a tag).
-3. O GitHub gera e publica. Os apps instalados baixam e pedem para reiniciar.
+1. Aumente `"version"` no `package.json` (ex.: 0.2.0 → 0.2.1).
+2. Actions > **Gerar instalador** > Run workflow, marcando **publicar**.
+3. Os apps instalados baixam sozinhos e avisam "Atualização do Pazi pronta" (instala ao reiniciar ou ao fechar o Pazi).
 
 ## Certificado do Windows
 Sem certificado de assinatura, o Windows mostra "O Windows protegeu o computador" na instalação:

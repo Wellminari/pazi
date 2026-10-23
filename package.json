@@ -1,7 +1,7 @@
 {
   "name": "pazi-desktop",
   "productName": "Pazi",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Pazi para Windows — painel e Pazi Atende com som, notificações e impressão direta",
   "author": "Pazinari",
   "main": "src/main.js",
@@ -38,7 +38,7 @@
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "build/icon.ico",
-      "artifactName": "Pazi-Setup-${version}.${ext}"
+      "artifactName": "Pazi-Setup.${ext}"
     },
     "nsis": {
       "oneClick": true,

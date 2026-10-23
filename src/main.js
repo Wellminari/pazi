@@ -6,7 +6,7 @@
 
 const {
   app, BrowserWindow, Tray, Menu, shell, ipcMain, Notification,
-  nativeImage, session, dialog,
+  nativeImage, session, screen,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -17,7 +17,7 @@ const cfg = require('./config');
 // Configurações salvas do usuário (tela cheia, iniciar com o Windows)
 // ---------------------------------------------------------------------------
 const settingsFile = () => path.join(app.getPath('userData'), 'pazi-settings.json');
-let settings = { fullscreen: { panel: false, atende: false }, openAtLogin: true };
+let settings = { fullscreen: { panel: false, atende: false }, openAtLogin: true, bounds: {} };
 
 function loadSettings() {
   try {
@@ -62,6 +62,10 @@ const iconPath = (kind = 'panel') => {
 const windows = { panel: null, atende: null };
 let tray = null;
 let isQuitting = false;
+let updateReadyVersion = null;
+// A janela do Pazi é criada sempre (escondida quando a pessoa abriu só o Pazi Atende
+// ou iniciou com o Windows): é nela que rodam o som, as notificações e o contador.
+const startPanelHidden = process.argv.includes(cfg.ARG_HIDDEN) || process.argv.includes(cfg.ARG_ATENDE);
 const badgeCounts = { panel: 0, atende: 0 };
 
 // ---------------------------------------------------------------------------
@@ -81,11 +85,22 @@ function openExternal(url) {
 // ---------------------------------------------------------------------------
 // Janelas
 // ---------------------------------------------------------------------------
+function savedBounds(kind) {
+  const b = settings.bounds && settings.bounds[kind];
+  if (!b || !b.width || !b.height) return null;
+  // Só reaproveita se a posição ainda cair num monitor conectado
+  const visible = screen.getAllDisplays().some(({ workArea: w }) =>
+    b.x < w.x + w.width - 50 && b.x + b.width > w.x + 50 && b.y < w.y + w.height - 50 && b.y + 40 > w.y);
+  return visible ? b : { width: b.width, height: b.height, maximized: b.maximized };
+}
+
 function createWindow(kind) {
   const isAtende = kind === 'atende';
+  const bounds = savedBounds(kind);
   const win = new BrowserWindow({
-    width: 1366,
-    height: 860,
+    width: bounds ? bounds.width : 1366,
+    height: bounds ? bounds.height : 860,
+    ...(bounds && bounds.x !== undefined ? { x: bounds.x, y: bounds.y } : {}),
     minWidth: 380,
     minHeight: 500,
     show: false,
@@ -117,12 +132,51 @@ function createWindow(kind) {
     });
   }
 
-  win.loadURL(isAtende ? cfg.ATENDE_URL : cfg.PANEL_URL);
+  const homeUrl = isAtende ? cfg.ATENDE_URL : cfg.PANEL_URL;
+  win.loadURL(homeUrl);
 
   win.once('ready-to-show', () => {
+    if (bounds && bounds.maximized) win.maximize();
     if (settings.fullscreen[kind]) win.setFullScreen(true);
-    if (!(kind === 'panel' && process.argv.includes(cfg.ARG_HIDDEN))) win.show();
+    if (!(kind === 'panel' && startPanelHidden)) win.show();
   });
+
+  // Guarda tamanho e posição (cada janela a sua)
+  let boundsTimer = null;
+  const rememberBounds = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (win.isDestroyed() || win.isFullScreen() || win.isMinimized()) return;
+      const maximized = win.isMaximized();
+      const prev = (settings.bounds && settings.bounds[kind]) || {};
+      settings.bounds = { ...(settings.bounds || {}), [kind]: maximized ? { ...prev, maximized: true } : { ...win.getBounds(), maximized: false } };
+      saveSettings();
+    }, 500);
+  };
+  ['resize', 'move', 'maximize', 'unmaximize'].forEach((ev) => win.on(ev, rememberBounds));
+
+  // Sem internet: mostra a tela "Sem conexão" e volta sozinho quando reconectar
+  win.webContents.on('did-fail-load', (_e, errorCode, _desc, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return; // -3 = carregamento cancelado (normal)
+    const target = isPanelUrl(validatedURL) ? validatedURL : homeUrl;
+    win.loadFile(path.join(__dirname, 'offline.html'), { query: { target } });
+  });
+
+  // Recuperação automática: se o painel travar ou fechar sozinho, recarrega
+  let hangTimer = null;
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit') return;
+    setTimeout(() => { if (!win.isDestroyed()) win.loadURL(homeUrl); }, 1500);
+  });
+  win.webContents.on('unresponsive', () => {
+    clearTimeout(hangTimer);
+    hangTimer = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try { win.webContents.forcefullyCrashRenderer(); } catch { /* noop */ }
+      setTimeout(() => { if (!win.isDestroyed()) win.loadURL(homeUrl); }, 1000);
+    }, 30000);
+  });
+  win.webContents.on('responsive', () => clearTimeout(hangTimer));
 
   // Fechar = esconder no relógio (o som e as notificações continuam)
   win.on('close', (e) => {
@@ -157,6 +211,7 @@ function createWindow(kind) {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, url) => {
+    if (url.startsWith('file:')) return; // tela "Sem conexão" do próprio app
     if (!isPanelUrl(url)) { e.preventDefault(); openExternal(url); }
   });
 
@@ -340,6 +395,10 @@ function rebuildTrayMenu() {
   if (!tray) return;
   const focused = BrowserWindow.getFocusedWindow() || windows.panel;
   tray.setContextMenu(Menu.buildFromTemplate([
+    ...(updateReadyVersion ? [
+      { label: `Reiniciar para atualizar (versão ${updateReadyVersion})`, click: () => installUpdateNow() },
+      { type: 'separator' },
+    ] : []),
     { label: 'Abrir Pazi', click: () => showWindow('panel') },
     { label: 'Abrir Pazi Atende', click: () => showWindow('atende') },
     { type: 'separator' },
@@ -371,29 +430,43 @@ function createTray() {
 // ---------------------------------------------------------------------------
 // Atualização automática da casca (o sistema online já atualiza sozinho)
 // ---------------------------------------------------------------------------
+function notifyApp(title, body, onClick) {
+  const n = new Notification({ title, body, icon: iconPath() });
+  if (onClick) n.on('click', onClick);
+  n.show();
+}
+
+function installUpdateNow() {
+  isQuitting = true;
+  autoUpdater.quitAndInstall(false, true);
+}
+
 function checkUpdates(manual = false) {
   if (!app.isPackaged) return;
-  autoUpdater.autoDownload = true;
+  if (manual && updateReadyVersion) {
+    notifyApp('Atualização do Pazi pronta', `A versão ${updateReadyVersion} já foi baixada. Clique aqui para reiniciar e atualizar.`, installUpdateNow);
+    return;
+  }
   autoUpdater.checkForUpdates().then((r) => {
     if (manual && (!r || !r.updateInfo || r.updateInfo.version === app.getVersion())) {
-      new Notification({ title: 'Pazi', body: 'Você já está na versão mais recente.', icon: iconPath() }).show();
+      notifyApp('Pazi', 'Você já está na versão mais recente.');
+    } else if (manual) {
+      notifyApp('Pazi', `Baixando a versão ${r.updateInfo.version}… avisaremos quando estiver pronta.`);
     }
   }).catch((err) => {
-    if (manual) new Notification({ title: 'Pazi', body: `Não foi possível procurar atualização: ${err.message}`, icon: iconPath() }).show();
+    if (manual) notifyApp('Pazi', `Não foi possível procurar atualização: ${err.message}`);
   });
 }
 
-autoUpdater.on('update-downloaded', async (info) => {
-  const { response } = await dialog.showMessageBox({
-    type: 'info',
-    title: 'Atualização do Pazi',
-    message: `A versão ${info.version} do Pazi foi baixada.`,
-    detail: 'Reinicie o Pazi para concluir a atualização.',
-    buttons: ['Reiniciar agora', 'Depois'],
-    defaultId: 0,
-    cancelId: 1,
-  });
-  if (response === 0) { isQuitting = true; autoUpdater.quitAndInstall(); }
+autoUpdater.autoDownload = true;
+// Se a pessoa não reiniciar agora, a atualização instala sozinha quando o Pazi for fechado
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on('update-downloaded', (info) => {
+  updateReadyVersion = info.version;
+  rebuildTrayMenu();
+  if (tray) tray.setToolTip(`Pazi — atualização ${info.version} pronta`);
+  notifyApp('Atualização do Pazi pronta', `A versão ${info.version} foi baixada. Clique aqui para reiniciar e atualizar.`, installUpdateNow);
 });
 
 // ---------------------------------------------------------------------------
@@ -412,8 +485,8 @@ app.whenReady().then(() => {
   session.defaultSession.setSpellCheckerLanguages(['pt-BR']);
 
   createTray();
+  createWindow('panel');
   if (process.argv.includes(cfg.ARG_ATENDE)) showWindow('atende');
-  else createWindow('panel');
 
   checkUpdates(false);
   setInterval(() => checkUpdates(false), 6 * 60 * 60 * 1000);
