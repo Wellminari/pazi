@@ -35,10 +35,11 @@ jobs:
           if [ ! -f build/pazi.png ]; then
             curl -fsSL -o build/pazi.png https://painel.pazi.app/pwa-icon-v2.png
           fi
-          python build/make-icon.py build/pazi.png build/icon.ico
-          # Pazi Atende: usa build/atende.png; se não existir, repete o ícone do Pazi
+          # Mesmo arredondamento do ícone do Pazi Atende (~12,5% do lado)
+          python build/make-icon.py build/pazi.png build/icon.ico 0.125
+          # Pazi Atende: usa build/atende.png (já vem arredondado, então raio 0)
           if [ -f build/atende.png ]; then
-            python build/make-icon.py build/atende.png build/atende.ico
+            python build/make-icon.py build/atende.png build/atende.ico 0
           else
             cp build/icon.ico build/atende.ico
           fi
