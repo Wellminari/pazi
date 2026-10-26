@@ -545,69 +545,6 @@ function sendRawToPrinter(deviceName, buffer) {
   });
 }
 
-// Teste pelo menu do relógio: imprime um cupom curto em ESC/POS na impressora padrão
-// Teste de acentos: imprime a mesma frase em várias combinações de comandos para
-// descobrir qual a impressora aceita (algumas térmicas chinesas ignoram o FS .)
-async function testAccentsPrint() {
-  try {
-    const win = windows.panel || BrowserWindow.getAllWindows()[0];
-    const printers = win ? await win.webContents.getPrintersAsync() : [];
-    const target = printers.find((p) => p.isDefault) || printers[0];
-    if (!target) return notifyApp('Teste de acentos', 'Nenhuma impressora instalada no Windows.');
-    const ESC = 0x1b, FS = 0x1c, GS = 0x1d;
-    const a = (t) => Buffer.from(t, 'latin1'); // só ASCII aqui
-    // "ã ç é á õ Ç Ã ú í" em cada página de código
-    const word = {
-      cp850: [0xC6, 0x20, 0x87, 0x20, 0x82, 0x20, 0xA0, 0x20, 0xE4, 0x20, 0x80, 0x20, 0xC7, 0x20, 0xA3, 0x20, 0xA1],
-      cp860: [0x84, 0x20, 0x87, 0x20, 0x82, 0x20, 0xA0, 0x20, 0x94, 0x20, 0x80, 0x20, 0x8E, 0x20, 0xA3, 0x20, 0xA1],
-      w1252: [0xE3, 0x20, 0xE7, 0x20, 0xE9, 0x20, 0xE1, 0x20, 0xF5, 0x20, 0xC7, 0x20, 0xC3, 0x20, 0xFA, 0x20, 0xED],
-    };
-    const tests = [
-      { label: 'A) CP850 + FS .', pre: [ESC, 0x40, FS, 0x2E, ESC, 0x74, 2], w: word.cp850 },
-      { label: 'B) CP850 sem FS .', pre: [ESC, 0x40, ESC, 0x74, 2], w: word.cp850 },
-      { label: 'C) CP860 + FS .', pre: [ESC, 0x40, FS, 0x2E, ESC, 0x74, 3], w: word.cp860 },
-      { label: 'D) WPC1252 (16) + FS .', pre: [ESC, 0x40, FS, 0x2E, ESC, 0x74, 16], w: word.w1252 },
-      { label: 'E) CP850 + FS . depois', pre: [ESC, 0x40, ESC, 0x74, 2, FS, 0x2E], w: word.cp850 },
-      { label: 'F) CP850 + FS C 0 + FS .', pre: [ESC, 0x40, FS, 0x43, 0, FS, 0x2E, ESC, 0x74, 2], w: word.cp850 },
-      { label: 'G) WPC1252 (71) + FS .', pre: [ESC, 0x40, FS, 0x2E, ESC, 0x74, 71], w: word.w1252 },
-    ];
-    const parts = [Buffer.from([ESC, 0x40, FS, 0x2E]), a('TESTE DE ACENTOS\n'), a('Certo: a c e a o C A u i com acento\n'), a('--------------------------------\n')];
-    for (const t of tests) {
-      parts.push(Buffer.from(t.pre), a(`${t.label}\n`), Buffer.from(t.w), a('\n\n'));
-    }
-    parts.push(Buffer.from([ESC, 0x40, FS, 0x2E]), a('Me mande a foto desta folha.\n\n\n\n'), Buffer.from([GS, 0x56, 0x42, 0x00]));
-    await sendRawToPrinter(target.name, Buffer.concat(parts));
-    notifyApp('Teste de acentos', `Enviado para "${target.name}". Tire uma foto da folha.`);
-  } catch (e) {
-    notifyApp('Teste de acentos falhou', String(e.message || e).slice(0, 200), () => shell.showItemInFolder(printLogFile()));
-  }
-}
-
-async function testRawPrint() {
-  try {
-    const win = windows.panel || BrowserWindow.getAllWindows()[0];
-    const printers = win ? await win.webContents.getPrintersAsync() : [];
-    const target = printers.find((p) => p.isDefault) || printers[0];
-    if (!target) return notifyApp('Teste de impressão', 'Nenhuma impressora instalada no Windows.');
-    const ESC = 0x1b, GS = 0x1d;
-    const txt = (t) => Buffer.from(t, 'latin1');
-    const bytes = Buffer.concat([
-      Buffer.from([ESC, 0x40]), Buffer.from([ESC, 0x61, 1]),
-      Buffer.from([ESC, 0x45, 1, GS, 0x21, 0x11]), txt('PAZI\n'),
-      Buffer.from([GS, 0x21, 0x00, ESC, 0x45, 0]), txt('Teste de impressao direta\n'),
-      txt('--------------------------------\n'),
-      Buffer.from([ESC, 0x61, 0]), txt('Se voce le isto, a impressao\nnativa (ESC/POS) funciona.\n'),
-      txt(`Impressora: ${target.name.slice(0, 40)}\n`),
-      txt(`Versao do app: ${app.getVersion()}\n\n\n\n`),
-      Buffer.from([GS, 0x56, 0x42, 0x00]),
-    ]);
-    await sendRawToPrinter(target.name, bytes);
-    notifyApp('Teste de impressão', `Enviado para "${target.name}". Se não saiu nada, me avise.`);
-  } catch (e) {
-    notifyApp('Teste de impressão falhou', String(e.message || e).slice(0, 200), () => shell.showItemInFolder(printLogFile()));
-  }
-}
-
 // data: Uint8Array/ArrayBuffer/number[] com os bytes ESC/POS, ou string base64
 // options: { deviceName (obrigatório), copies? }
 ipcMain.handle('pazi:print-raw', async (event, data, options = {}) => {
@@ -744,8 +681,6 @@ function rebuildTrayMenu() {
       },
     },
     { label: 'Procurar atualização', click: () => checkUpdates(true) },
-    { label: 'Testar impressão direta (térmica)', click: () => testRawPrint() },
-    { label: 'Testar acentos (térmica)', click: () => testAccentsPrint() },
     { type: 'separator' },
     { label: `Versão ${app.getVersion()}`, enabled: false },
     { label: 'Sair do Pazi', click: () => { isQuitting = true; app.quit(); } },
