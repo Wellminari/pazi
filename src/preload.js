@@ -9,7 +9,7 @@ if (location.host === PANEL_HOST) {
   contextBridge.exposeInMainWorld('paziDesktop', {
     isDesktop: true,
 
-    /** { isDesktop, version, platform, window: 'panel' | 'atende' } */
+    /** { isDesktop, version, platform, window: 'panel' | 'atende', features: string[] } */
     info: () => ipcRenderer.invoke('pazi:info'),
 
     /** Lista as impressoras instaladas no Windows. */
@@ -20,6 +20,12 @@ if (location.host === PANEL_HOST) {
      * options: { deviceName?, copies?, widthMm? (80 = térmica), heightMm?, landscape? }
      */
     printHtml: (html, options) => ipcRenderer.invoke('pazi:print-html', html, options || {}),
+
+    /**
+     * Impressão nativa para térmicas (ESC/POS): manda os bytes direto para a impressora,
+     * sem virar imagem. data: Uint8Array | number[] | base64. options: { deviceName, copies? }
+     */
+    printRaw: (data, options) => ipcRenderer.invoke('pazi:print-raw', data, options || {}),
 
     /** Notificação do Windows (silenciosa: o som é tocado pelo painel). kind: 'order' | 'message' */
     notify: (payload) => ipcRenderer.invoke('pazi:notify', payload || {}),

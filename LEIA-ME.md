@@ -24,6 +24,9 @@ if (window.paziDesktop?.isDesktop) {
   await window.paziDesktop.printHtml(html, {          // imprime sem janela de impressão
     deviceName: 'EPSON TM-T20', widthMm: 80, copies: 1,
   });
+  await window.paziDesktop.printRaw(bytesEscPos, {     // térmica nativa (ESC/POS), igual ao QZ Tray
+    deviceName: 'HPRT MPT-II',
+  });
   await window.paziDesktop.notify({                   // notificação do Windows (silenciosa)
     kind: 'order', title: 'Novo pedido #123', body: 'Maria — R$ 99,00', url: '/orders/ID',
   });

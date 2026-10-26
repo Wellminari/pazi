@@ -419,7 +419,11 @@ function assertFromPanel(event) {
 
 ipcMain.handle('pazi:info', (event) => {
   assertFromPanel(event);
-  return { isDesktop: true, version: app.getVersion(), platform: process.platform, window: kindOf(event.sender) };
+  return {
+    isDesktop: true, version: app.getVersion(), platform: process.platform, window: kindOf(event.sender),
+    // Recursos desta versão do app (o painel testa antes de usar)
+    features: ['printHtml', 'printRaw', 'printerStatus', 'mediaViewer'],
+  };
 });
 
 // O Windows mantém a impressora "instalada" mesmo desligada/desconectada.
@@ -465,6 +469,82 @@ ipcMain.handle('pazi:list-printers', async (event) => {
       port: st ? String(st.PortName || '') : '',
     };
   });
+});
+
+// ---------------------------------------------------------------------------
+// Impressão nativa (ESC/POS) para térmicas: manda os bytes direto para a impressora
+// pelo spooler do Windows (tipo RAW), sem transformar em imagem. Sai igual à prévia
+// do painel: fonte da própria impressora, negrito real, colunas exatas e guilhotina.
+// ---------------------------------------------------------------------------
+const RAW_PS = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public class PaziRaw {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public class DOCINFO { [MarshalAs(UnmanagedType.LPWStr)] public string pDocName; [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile; [MarshalAs(UnmanagedType.LPWStr)] public string pDataType; }
+  [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool OpenPrinter(string n, out IntPtr h, IntPtr d);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool ClosePrinter(IntPtr h);
+  [DllImport("winspool.drv", CharSet=CharSet.Unicode, SetLastError=true)] static extern int StartDocPrinter(IntPtr h, int level, [In] DOCINFO di);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndDocPrinter(IntPtr h);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool StartPagePrinter(IntPtr h);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool EndPagePrinter(IntPtr h);
+  [DllImport("winspool.drv", SetLastError=true)] static extern bool WritePrinter(IntPtr h, byte[] b, int c, out int w);
+  public static string Send(string printer, byte[] data) {
+    IntPtr h;
+    if (!OpenPrinter(printer, out h, IntPtr.Zero)) return "Impressora não encontrada (" + Marshal.GetLastWin32Error() + ")";
+    try {
+      var di = new DOCINFO { pDocName = "Pazi", pDataType = "RAW" };
+      if (StartDocPrinter(h, 1, di) == 0) return "Falha ao iniciar (" + Marshal.GetLastWin32Error() + ")";
+      try {
+        StartPagePrinter(h);
+        int w; bool ok = WritePrinter(h, data, data.Length, out w);
+        EndPagePrinter(h);
+        if (!ok || w != data.Length) return "Falha ao enviar (" + Marshal.GetLastWin32Error() + ")";
+      } finally { EndDocPrinter(h); }
+    } finally { ClosePrinter(h); }
+    return "ok";
+  }
+}
+"@
+$bytes = [Convert]::FromBase64String([Console]::In.ReadToEnd())
+[Console]::Out.Write([PaziRaw]::Send($env:PAZI_PRINTER, $bytes))
+`;
+
+function sendRawToPrinter(deviceName, buffer) {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') return reject(new Error('Disponível só no Windows'));
+    const child = execFile('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', RAW_PS],
+      { timeout: 30000, windowsHide: true, env: { ...process.env, PAZI_PRINTER: deviceName } },
+      (err, stdout, stderr) => {
+        const out = String(stdout || '').trim();
+        if (out === 'ok') return resolve({ ok: true });
+        reject(new Error(out || String(stderr || '').trim() || (err && err.message) || 'Falha ao imprimir'));
+      });
+    child.stdin.end(buffer.toString('base64'));
+  });
+}
+
+// data: Uint8Array/ArrayBuffer/number[] com os bytes ESC/POS, ou string base64
+// options: { deviceName (obrigatório), copies? }
+ipcMain.handle('pazi:print-raw', async (event, data, options = {}) => {
+  assertFromPanel(event);
+  let buf;
+  if (typeof data === 'string') buf = Buffer.from(data, 'base64');
+  else if (data instanceof ArrayBuffer) buf = Buffer.from(new Uint8Array(data));
+  else if (ArrayBuffer.isView(data)) buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  else if (Array.isArray(data)) buf = Buffer.from(data);
+  else throw new Error('Dados de impressão inválidos');
+  if (!buf.length) throw new Error('Nada para imprimir');
+  if (buf.length > 4 * 1024 * 1024) throw new Error('Impressão muito grande');
+  const deviceName = String(options.deviceName || '');
+  if (!deviceName) throw new Error('Escolha a impressora');
+  const printers = await event.sender.getPrintersAsync();
+  if (!printers.some((p) => p.name === deviceName)) throw new Error('Impressora não encontrada');
+  const copies = Math.max(1, Math.min(10, Number(options.copies) || 1));
+  for (let i = 0; i < copies; i++) await sendRawToPrinter(deviceName, buf);
+  return { ok: true };
 });
 
 // Imprime um HTML direto na impressora, sem janela de impressão.
