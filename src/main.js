@@ -515,19 +515,60 @@ $bytes = [Convert]::FromBase64String([Console]::In.ReadToEnd())
 [Console]::Out.Write([PaziRaw]::Send($env:PAZI_PRINTER, $bytes))
 `;
 
+// Comando codificado (UTF-16LE em base64): evita qualquer problema de aspas e quebras de linha
+const RAW_PS_ENCODED = Buffer.from(RAW_PS, 'utf16le').toString('base64');
+const printLogFile = () => path.join(app.getPath('userData'), 'pazi-impressao.log');
+function logPrint(line) {
+  try {
+    const f = printLogFile();
+    try { if (fs.statSync(f).size > 512 * 1024) fs.writeFileSync(f, ''); } catch { /* novo */ }
+    fs.appendFileSync(f, `[${new Date().toISOString()}] ${line}\n`);
+  } catch { /* noop */ }
+}
+
 function sendRawToPrinter(deviceName, buffer) {
   return new Promise((resolve, reject) => {
     if (process.platform !== 'win32') return reject(new Error('Disponível só no Windows'));
     const child = execFile('powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', RAW_PS],
-      { timeout: 30000, windowsHide: true, env: { ...process.env, PAZI_PRINTER: deviceName } },
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', RAW_PS_ENCODED],
+      { timeout: 30000, windowsHide: true, env: { ...process.env, PAZI_PRINTER: deviceName }, maxBuffer: 1024 * 1024 },
       (err, stdout, stderr) => {
         const out = String(stdout || '').trim();
-        if (out === 'ok') return resolve({ ok: true });
-        reject(new Error(out || String(stderr || '').trim() || (err && err.message) || 'Falha ao imprimir'));
+        if (out.endsWith('ok')) { logPrint(`RAW ok "${deviceName}" ${buffer.length} bytes`); return resolve({ ok: true }); }
+        const reason = out || String(stderr || '').trim().split('\n').slice(0, 3).join(' ') || (err && err.message) || 'Falha ao imprimir';
+        logPrint(`RAW ERRO "${deviceName}": ${reason}`);
+        reject(new Error(reason));
       });
+    child.on('error', (e) => { logPrint(`RAW ERRO ao iniciar PowerShell: ${e.message}`); });
+    child.stdin.on('error', () => { /* processo já saiu */ });
     child.stdin.end(buffer.toString('base64'));
   });
+}
+
+// Teste pelo menu do relógio: imprime um cupom curto em ESC/POS na impressora padrão
+async function testRawPrint() {
+  try {
+    const win = windows.panel || BrowserWindow.getAllWindows()[0];
+    const printers = win ? await win.webContents.getPrintersAsync() : [];
+    const target = printers.find((p) => p.isDefault) || printers[0];
+    if (!target) return notifyApp('Teste de impressão', 'Nenhuma impressora instalada no Windows.');
+    const ESC = 0x1b, GS = 0x1d;
+    const txt = (t) => Buffer.from(t, 'latin1');
+    const bytes = Buffer.concat([
+      Buffer.from([ESC, 0x40]), Buffer.from([ESC, 0x61, 1]),
+      Buffer.from([ESC, 0x45, 1, GS, 0x21, 0x11]), txt('PAZI\n'),
+      Buffer.from([GS, 0x21, 0x00, ESC, 0x45, 0]), txt('Teste de impressao direta\n'),
+      txt('--------------------------------\n'),
+      Buffer.from([ESC, 0x61, 0]), txt('Se voce le isto, a impressao\nnativa (ESC/POS) funciona.\n'),
+      txt(`Impressora: ${target.name.slice(0, 40)}\n`),
+      txt(`Versao do app: ${app.getVersion()}\n\n\n\n`),
+      Buffer.from([GS, 0x56, 0x42, 0x00]),
+    ]);
+    await sendRawToPrinter(target.name, bytes);
+    notifyApp('Teste de impressão', `Enviado para "${target.name}". Se não saiu nada, me avise.`);
+  } catch (e) {
+    notifyApp('Teste de impressão falhou', String(e.message || e).slice(0, 200), () => shell.showItemInFolder(printLogFile()));
+  }
 }
 
 // data: Uint8Array/ArrayBuffer/number[] com os bytes ESC/POS, ou string base64
@@ -576,7 +617,10 @@ ipcMain.handle('pazi:print-html', async (event, html, options = {}) => {
         landscape: !!options.landscape,
         margins: { marginType: 'none' },
         pageSize,
-      }, (success, reason) => (success ? resolve({ ok: true }) : reject(new Error(reason || 'Falha ao imprimir'))));
+      }, (success, reason) => {
+        logPrint(`HTML ${success ? 'ok' : 'ERRO: ' + reason} "${options.deviceName || 'padrão'}"`);
+        return success ? resolve({ ok: true }) : reject(new Error(reason || 'Falha ao imprimir'));
+      });
     });
   } finally {
     if (!printWin.isDestroyed()) printWin.destroy();
@@ -663,6 +707,7 @@ function rebuildTrayMenu() {
       },
     },
     { label: 'Procurar atualização', click: () => checkUpdates(true) },
+    { label: 'Testar impressão direta (térmica)', click: () => testRawPrint() },
     { type: 'separator' },
     { label: `Versão ${app.getVersion()}`, enabled: false },
     { label: 'Sair do Pazi', click: () => { isQuitting = true; app.quit(); } },
