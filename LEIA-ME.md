@@ -9,6 +9,7 @@ O sistema continua online — tudo que for publicado no Lovable aparece aqui soz
 - **Tela cheia**: F11 (ou pelo ícone no relógio). Lembra a escolha.
 - **Iniciar com o Windows**: opção no ícone do relógio (abre escondido).
 - **Impressão direta e notificações**: disponíveis para o painel pela ponte `window.paziDesktop` (ver abaixo).
+- **Visualizador de mídias**: imagens, PDF, vídeos e áudios abertos no Pazi Atende abrem numa janela do próprio app (Esc fecha, Ctrl+S salva, botão direito para salvar/copiar).
 - **Atualização automática** da casca a partir das versões publicadas em Releases.
 
 Atalhos: F5 recarrega · Ctrl + / Ctrl - / Ctrl 0 zoom · F11 tela cheia · Ctrl+Shift+I ferramentas.

@@ -93,6 +93,83 @@ function openExternal(url) {
 }
 
 // ---------------------------------------------------------------------------
+// Visualizador interno de mídias (imagem, PDF, vídeo, áudio) — usado pelo Pazi Atende
+// ---------------------------------------------------------------------------
+const MEDIA_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|heic|pdf|mp4|webm|mov|m4v|3gp|ogg|oga|opus|mp3|m4a|aac|wav|amr)$/i;
+const MEDIA_HOSTS = /(\.supabase\.co|\.supabase\.in|lookaside\.fbsbx\.com|\.whatsapp\.net|\.fbcdn\.net|\.cdninstagram\.com)$/i;
+
+function isMediaUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'blob:' || (u.protocol === 'data:' && /^data:(image|video|audio|application\/pdf)/i.test(url))) return true;
+    if (!['https:', 'http:'].includes(u.protocol)) return false;
+    if (MEDIA_EXT.test(decodeURIComponent(u.pathname))) return true;
+    // Arquivos do Supabase (storage e funções de mídia) e mídias da Meta/WhatsApp
+    if (MEDIA_HOSTS.test(u.hostname)) {
+      return u.hostname.includes('supabase') ? /\/(storage|functions)\/v1\//.test(u.pathname) : true;
+    }
+    return false;
+  } catch { return false; }
+}
+
+let viewerWin = null;
+function openMediaViewer(url, parent) {
+  if (viewerWin && !viewerWin.isDestroyed()) {
+    viewerWin.loadURL(url);
+    if (viewerWin.isMinimized()) viewerWin.restore();
+    viewerWin.show(); viewerWin.focus();
+    return;
+  }
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  viewerWin = new BrowserWindow({
+    width: Math.min(1100, area.width - 80),
+    height: Math.min(800, area.height - 80),
+    parent: parent || undefined,
+    modal: false,
+    title: 'Visualizar — Pazi',
+    icon: iconPath('atende'),
+    backgroundColor: '#1f1f1f',
+    autoHideMenuBar: true,
+    webPreferences: {
+      sandbox: true, contextIsolation: true, nodeIntegration: false,
+      plugins: true, // visualizador de PDF do próprio app
+    },
+  });
+  viewerWin.setMenuBarVisibility(false);
+  viewerWin.loadURL(url);
+
+  // Dentro do visualizador nada navega para fora; links vão para o navegador
+  viewerWin.webContents.setWindowOpenHandler(({ url: u }) => { openExternal(u); return { action: 'deny' }; });
+  viewerWin.webContents.on('will-navigate', (e, u) => { if (!isMediaUrl(u)) { e.preventDefault(); openExternal(u); } });
+
+  viewerWin.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown') return;
+    const ctrl = input.control || input.meta;
+    if (input.key === 'Escape') { viewerWin.close(); e.preventDefault(); }
+    else if (ctrl && input.key.toLowerCase() === 's') { viewerWin.webContents.downloadURL(viewerWin.webContents.getURL()); e.preventDefault(); }
+    else if (ctrl && (input.key === '=' || input.key === '+')) { viewerWin.webContents.setZoomLevel(viewerWin.webContents.getZoomLevel() + 0.5); e.preventDefault(); }
+    else if (ctrl && input.key === '-') { viewerWin.webContents.setZoomLevel(viewerWin.webContents.getZoomLevel() - 0.5); e.preventDefault(); }
+    else if (ctrl && input.key === '0') { viewerWin.webContents.setZoomLevel(0); e.preventDefault(); }
+  });
+
+  // Botão direito: salvar, copiar imagem, abrir no navegador
+  viewerWin.webContents.on('context-menu', (_e, p) => {
+    const current = viewerWin.webContents.getURL();
+    const items = [];
+    if (p.mediaType === 'image' && p.srcURL) items.push({ label: 'Copiar imagem', click: () => viewerWin.webContents.copyImageAt(p.x, p.y) });
+    items.push(
+      { label: 'Salvar arquivo…', click: () => viewerWin.webContents.downloadURL(p.srcURL || current) },
+      { label: 'Abrir no navegador', enabled: /^https?:/.test(current), click: () => openExternal(current) },
+      { type: 'separator' },
+      { label: 'Fechar (Esc)', click: () => viewerWin.close() },
+    );
+    Menu.buildFromTemplate(items).popup({ window: viewerWin });
+  });
+
+  viewerWin.on('closed', () => { viewerWin = null; });
+}
+
+// ---------------------------------------------------------------------------
 // Janelas
 // ---------------------------------------------------------------------------
 function savedBounds(kind) {
@@ -218,12 +295,27 @@ function createWindow(kind) {
         },
       };
     }
+    // Arquivo gerado na própria página (blob:): abre como janela filha, que enxerga o arquivo
+    if (url.startsWith('blob:')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1100, height: 800, title: 'Visualizar — Pazi', icon: iconPath('atende'),
+          backgroundColor: '#1f1f1f', autoHideMenuBar: true,
+          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, plugins: true },
+        },
+      };
+    }
+    if (isMediaUrl(url)) { openMediaViewer(url, win); return { action: 'deny' }; }
     openExternal(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, url) => {
     if (url.startsWith('file:')) return; // tela "Sem conexão" do próprio app
-    if (!isPanelUrl(url)) { e.preventDefault(); openExternal(url); }
+    if (isPanelUrl(url)) return;
+    e.preventDefault();
+    if (isMediaUrl(url)) openMediaViewer(url, win);
+    else openExternal(url);
   });
 
   // Atalhos de teclado (sem barra de menu do Windows)
@@ -247,6 +339,13 @@ function createWindow(kind) {
     }
     if (p.misspelledWord) {
       items.push({ label: 'Adicionar ao dicionário', click: () => win.webContents.session.addWordToSpellCheckerDictionary(p.misspelledWord) });
+      items.push({ type: 'separator' });
+    }
+    const media = (p.mediaType && p.mediaType !== 'none' && p.srcURL) ? p.srcURL : (p.linkURL && isMediaUrl(p.linkURL) ? p.linkURL : null);
+    if (media) {
+      items.push({ label: 'Abrir no visualizador', click: () => openMediaViewer(media, win) });
+      items.push({ label: 'Salvar arquivo…', click: () => win.webContents.downloadURL(media) });
+      if (p.mediaType === 'image') items.push({ label: 'Copiar imagem', click: () => win.webContents.copyImageAt(p.x, p.y) });
       items.push({ type: 'separator' });
     }
     if (p.linkURL) items.push({ label: 'Abrir link no navegador', click: () => openExternal(p.linkURL) }, { type: 'separator' });
@@ -550,6 +649,18 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler((wc, permission) =>
     !!wc && isPanelUrl(wc.getURL()) && allowed.has(permission));
   session.defaultSession.setSpellCheckerLanguages(['pt-BR']);
+  session.defaultSession.on('will-download', (_e, item) => {
+    item.setSaveDialogOptions({
+      title: 'Salvar arquivo',
+      defaultPath: path.join(app.getPath('downloads'), item.getFilename() || 'arquivo'),
+    });
+    item.once('done', (_ev, state) => {
+      if (state === 'completed') {
+        const saved = item.getSavePath();
+        notifyApp('Arquivo salvo', path.basename(saved), () => shell.showItemInFolder(saved));
+      }
+    });
+  });
 
   createTray();
   createWindow('panel');
