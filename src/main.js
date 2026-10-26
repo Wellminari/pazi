@@ -53,6 +53,15 @@ if (!app.requestSingleInstanceLock()) {
 
 app.setAppUserModelId(cfg.APP_ID_PANEL);
 
+// O som do pedido precisa tocar mesmo que ninguém tenha clicado na janela
+// (ex.: o Pazi abriu escondido ao ligar o computador). Sem isto o Chromium
+// bloqueia o áudio até a primeira interação.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// Não deixa o Windows "adormecer" o painel quando a janela está escondida/atrás de outras
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
 // Ícones: Pazi (painel e relógio) e Pazi Atende (janela, barra de tarefas e notificações de mensagem)
 const iconPath = (kind = 'panel') => {
   const file = kind === 'atende' ? 'atende.ico' : 'icon.ico';
@@ -203,6 +212,7 @@ function createWindow(kind) {
           webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true, nodeIntegration: false, sandbox: true,
+            backgroundThrottling: false,
           },
         },
       };
@@ -352,6 +362,10 @@ ipcMain.handle('pazi:print-html', async (event, html, options = {}) => {
 
 // Notificação do Windows. O SOM é tocado pelo painel (som escolhido nas configurações),
 // por isso a notificação sai em silêncio.
+// Guarda as notificações abertas: se o objeto for descartado da memória,
+// o Windows mostra o aviso mas o CLIQUE não chega ao app.
+const liveNotifications = new Set();
+
 ipcMain.handle('pazi:notify', (event, payload = {}) => {
   assertFromPanel(event);
   const kind = payload.kind === 'message' ? 'atende' : kindOf(event.sender);
@@ -361,12 +375,24 @@ ipcMain.handle('pazi:notify', (event, payload = {}) => {
     icon: iconPath(kind),
     silent: true,
   });
+  liveNotifications.add(n);
+  const release = () => setTimeout(() => liveNotifications.delete(n), 60 * 60 * 1000);
   n.on('click', () => {
+    liveNotifications.delete(n);
     const win = showWindow(kind);
-    if (payload.url && isPanelUrl(new URL(payload.url, cfg.PANEL_ORIGIN).href)) {
-      win.loadURL(new URL(payload.url, cfg.PANEL_ORIGIN).href);
+    // Traz para a frente mesmo com outro programa em foco
+    win.setAlwaysOnTop(true);
+    win.focus();
+    setTimeout(() => { if (!win.isDestroyed()) win.setAlwaysOnTop(false); }, 300);
+    if (payload.url) {
+      try {
+        const target = new URL(payload.url, cfg.PANEL_ORIGIN).href;
+        if (isPanelUrl(target) && win.webContents.getURL() !== target) win.loadURL(target);
+      } catch { /* url inválida: só abre a janela */ }
     }
   });
+  n.on('close', release);
+  n.on('failed', () => liveNotifications.delete(n));
   n.show();
   return true;
 });
@@ -424,6 +450,7 @@ function createTray() {
   tray = new Tray(iconPath());
   tray.setToolTip('Pazi');
   tray.on('click', () => showWindow('panel'));
+  tray.on('double-click', () => showWindow('panel'));
   rebuildTrayMenu();
 }
 
