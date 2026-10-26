@@ -19,7 +19,7 @@ Só existe quando o painel está aberto dentro do app (em `painel.pazi.app`).
 ```js
 if (window.paziDesktop?.isDesktop) {
   await window.paziDesktop.info();                    // { version, platform, window: 'panel' | 'atende' }
-  await window.paziDesktop.listPrinters();            // [{ name, displayName, isDefault }]
+  await window.paziDesktop.listPrinters();            // [{ name, displayName, isDefault, online, isVirtual, status }]
   await window.paziDesktop.printHtml(html, {          // imprime sem janela de impressão
     deviceName: 'EPSON TM-T20', widthMm: 80, copies: 1,
   });

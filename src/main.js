@@ -10,6 +10,7 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const cfg = require('./config');
 
@@ -322,10 +323,49 @@ ipcMain.handle('pazi:info', (event) => {
   return { isDesktop: true, version: app.getVersion(), platform: process.platform, window: kindOf(event.sender) };
 });
 
+// O Windows mantém a impressora "instalada" mesmo desligada/desconectada.
+// Para saber se ela está de fato conectada, consulta o estado real no Windows.
+// PrinterStatus do Win32_Printer: 3 pronta, 4 imprimindo, 5 aquecendo, 6 parada, 7 offline.
+const VIRTUAL_PORTS = /^(PORTPROMPT:|nul:?|FILE:|SHRFAX:|XPSPort:|ONENOTE|WSD-?$)/i;
+const VIRTUAL_NAMES = /(PDF|XPS|OneNote|Fax|Enviar para|Send To)/i;
+
+function windowsPrinterStatus() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    const cmd = 'Get-CimInstance Win32_Printer | Select-Object Name,WorkOffline,PrinterStatus,PortName,Network | ConvertTo-Json -Compress';
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd],
+      { timeout: 8000, windowsHide: true }, (err, stdout) => {
+        if (err || !stdout) return resolve(null);
+        try {
+          const raw = JSON.parse(stdout);
+          const list = Array.isArray(raw) ? raw : [raw];
+          const map = new Map();
+          for (const p of list) if (p && p.Name) map.set(String(p.Name), p);
+          resolve(map);
+        } catch { resolve(null); }
+      });
+  });
+}
+
 ipcMain.handle('pazi:list-printers', async (event) => {
   assertFromPanel(event);
-  const list = await event.sender.getPrintersAsync();
-  return list.map((p) => ({ name: p.name, displayName: p.displayName || p.name, isDefault: !!p.isDefault, status: p.status }));
+  const [list, status] = await Promise.all([event.sender.getPrintersAsync(), windowsPrinterStatus()]);
+  return list.map((p) => {
+    const st = status && status.get(p.name);
+    const isVirtual = VIRTUAL_NAMES.test(p.name) || !!(st && VIRTUAL_PORTS.test(String(st.PortName || '')));
+    // online: true = conectada · false = desconectada/desligada · null = não deu para saber
+    let online = null;
+    if (st) online = !st.WorkOffline && ![6, 7].includes(Number(st.PrinterStatus));
+    return {
+      name: p.name,
+      displayName: p.displayName || p.name,
+      isDefault: !!p.isDefault,
+      isVirtual,
+      online,
+      status: online === true ? 'online' : online === false ? 'offline' : 'unknown',
+      port: st ? String(st.PortName || '') : '',
+    };
+  });
 });
 
 // Imprime um HTML direto na impressora, sem janela de impressão.
