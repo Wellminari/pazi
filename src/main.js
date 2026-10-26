@@ -243,6 +243,10 @@ function createWindow(kind) {
   ['resize', 'move', 'maximize', 'unmaximize'].forEach((ev) => win.on(ev, rememberBounds));
 
   // Sem internet: mostra a tela "Sem conexão" e volta sozinho quando reconectar
+  win.webContents.on('did-finish-load', () => {
+    if (updateStatus.state !== 'idle' && isPanelUrl(win.webContents.getURL())) win.webContents.send('pazi:update-status', { ...updateStatus, currentVersion: app.getVersion() });
+  });
+
   win.webContents.on('did-fail-load', (_e, errorCode, _desc, validatedURL, isMainFrame) => {
     if (!isMainFrame || errorCode === -3) return; // -3 = carregamento cancelado (normal)
     const target = isPanelUrl(validatedURL) ? validatedURL : homeUrl;
@@ -422,7 +426,7 @@ ipcMain.handle('pazi:info', (event) => {
   return {
     isDesktop: true, version: app.getVersion(), platform: process.platform, window: kindOf(event.sender),
     // Recursos desta versão do app (o painel testa antes de usar)
-    features: ['printHtml', 'printRaw', 'printerStatus', 'mediaViewer'],
+    features: ['printHtml', 'printRaw', 'printerStatus', 'mediaViewer', 'updates'],
   };
 });
 
@@ -704,12 +708,38 @@ function checkUpdates(manual = false) {
   });
 }
 
+// Estado da atualização, enviado ao painel para aparecer no sino
+// state: 'idle' | 'checking' | 'downloading' | 'ready' | 'error'
+let updateStatus = { state: 'idle', currentVersion: null, version: null, percent: 0 };
+function setUpdateStatus(patch) {
+  updateStatus = { ...updateStatus, ...patch, currentVersion: app.getVersion() };
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed() && isPanelUrl(w.webContents.getURL())) w.webContents.send('pazi:update-status', updateStatus); } catch { /* noop */ }
+  }
+}
+
+autoUpdater.on('checking-for-update', () => { if (updateStatus.state !== 'ready') setUpdateStatus({ state: 'checking' }); });
+autoUpdater.on('update-available', (info) => setUpdateStatus({ state: 'downloading', version: info.version, percent: 0 }));
+autoUpdater.on('update-not-available', () => { if (updateStatus.state !== 'ready') setUpdateStatus({ state: 'idle' }); });
+autoUpdater.on('download-progress', (p) => setUpdateStatus({ state: 'downloading', percent: Math.round(p.percent || 0) }));
+autoUpdater.on('error', () => { if (updateStatus.state !== 'ready') setUpdateStatus({ state: 'idle' }); });
+
+ipcMain.handle('pazi:update-status', (event) => { assertFromPanel(event); return { ...updateStatus, currentVersion: app.getVersion() }; });
+ipcMain.handle('pazi:install-update', (event) => {
+  assertFromPanel(event);
+  if (!updateReadyVersion) return false;
+  setTimeout(installUpdateNow, 300);
+  return true;
+});
+ipcMain.handle('pazi:check-update', (event) => { assertFromPanel(event); checkUpdates(false); return true; });
+
 autoUpdater.autoDownload = true;
 // Se a pessoa não reiniciar agora, a atualização instala sozinha quando o Pazi for fechado
 autoUpdater.autoInstallOnAppQuit = true;
 
 autoUpdater.on('update-downloaded', (info) => {
   updateReadyVersion = info.version;
+  setUpdateStatus({ state: 'ready', version: info.version, percent: 100 });
   rebuildTrayMenu();
   if (tray) tray.setToolTip(`Pazi — atualização ${info.version} pronta`);
   notifyApp('Atualização do Pazi pronta', `A versão ${info.version} foi baixada. Clique aqui para reiniciar e atualizar.`, installUpdateNow);

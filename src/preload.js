@@ -36,5 +36,21 @@ if (location.host === PANEL_HOST) {
     openAtende: () => ipcRenderer.invoke('pazi:open-atende'),
     openPanel: () => ipcRenderer.invoke('pazi:open-panel'),
     toggleFullscreen: () => ipcRenderer.invoke('pazi:toggle-fullscreen'),
+
+    /**
+     * Atualização do app (para mostrar no sino).
+     * status: { state: 'idle'|'checking'|'downloading'|'ready', currentVersion, version, percent }
+     */
+    getUpdateStatus: () => ipcRenderer.invoke('pazi:update-status'),
+    /** Avisa sempre que o estado muda. Devolve uma função para parar de ouvir. */
+    onUpdateStatus: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const handler = (_e, status) => { try { callback(status); } catch { /* noop */ } };
+      ipcRenderer.on('pazi:update-status', handler);
+      return () => ipcRenderer.removeListener('pazi:update-status', handler);
+    },
+    /** Reinicia o app e instala a versão baixada (só funciona com state === 'ready'). */
+    installUpdate: () => ipcRenderer.invoke('pazi:install-update'),
+    checkForUpdate: () => ipcRenderer.invoke('pazi:check-update'),
   });
 }

@@ -31,6 +31,9 @@ if (window.paziDesktop?.isDesktop) {
     kind: 'order', title: 'Novo pedido #123', body: 'Maria — R$ 99,00', url: '/orders/ID',
   });
   await window.paziDesktop.setBadge(3);               // bolinha no ícone da barra de tarefas
+  const off = window.paziDesktop.onUpdateStatus((st) => { /* st.state === 'ready' → mostrar no sino */ });
+  await window.paziDesktop.getUpdateStatus();         // { state, currentVersion, version, percent }
+  await window.paziDesktop.installUpdate();           // reinicia e atualiza
   await window.paziDesktop.openAtende();
   await window.paziDesktop.toggleFullscreen();
 }
