@@ -1,7 +1,7 @@
 {
   "name": "pazi-desktop",
   "productName": "Pazi",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Pazi para Windows — painel e Pazi Atende com som, notificações e impressão direta",
   "author": "Pazinari",
   "main": "src/main.js",
