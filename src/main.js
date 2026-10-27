@@ -420,18 +420,56 @@ function startOrderWatchdog() {
 // ---------------------------------------------------------------------------
 // Contador no ícone da barra de tarefas (bolinha vermelha com número)
 // ---------------------------------------------------------------------------
+// Fonte de pixels 5x7 para desenhar o número dentro da bolinha
+const DIGITS = {
+  '0': ['01110','10001','10011','10101','11001','10001','01110'],
+  '1': ['00100','01100','00100','00100','00100','00100','01110'],
+  '2': ['01110','10001','00001','00010','00100','01000','11111'],
+  '3': ['11110','00001','00001','01110','00001','00001','11110'],
+  '4': ['00010','00110','01010','10010','11111','00010','00010'],
+  '5': ['11111','10000','11110','00001','00001','10001','01110'],
+  '6': ['00110','01000','10000','11110','10001','10001','01110'],
+  '7': ['11111','00001','00010','00100','01000','01000','01000'],
+  '8': ['01110','10001','10001','01110','10001','10001','01110'],
+  '9': ['01110','10001','10001','01111','00001','00010','01100'],
+  '+': ['00000','00100','00100','11111','00100','00100','00000'],
+};
+
 function makeBadge(count) {
   const size = 32;
   const buf = Buffer.alloc(size * size * 4); // BGRA
   const r = size / 2;
+  const set = (x, y, b, g, rr) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    const i = (y * size + x) * 4; buf[i] = b; buf[i + 1] = g; buf[i + 2] = rr; buf[i + 3] = 0xff;
+  };
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const dx = x - r + 0.5, dy = y - r + 0.5;
-      if (dx * dx + dy * dy <= (r - 1) * (r - 1)) {
-        const i = (y * size + x) * 4;
-        buf[i] = 0x3c; buf[i + 1] = 0x14; buf[i + 2] = 0xe8; buf[i + 3] = 0xff; // vermelho/rosa
-      }
+      if (dx * dx + dy * dy <= (r - 1) * (r - 1)) set(x, y, 0x3c, 0x14, 0xe8); // vermelho/rosa
     }
+  }
+  // Número em branco no centro ("9+" a partir de 10)
+  const text = count > 9 ? '9+' : String(Math.max(1, count));
+  const scale = text.length === 1 ? 3 : 2;
+  const gap = scale;
+  const textW = text.length * 5 * scale + (text.length - 1) * gap;
+  const textH = 7 * scale;
+  let ox = Math.round((size - textW) / 2);
+  const oy = Math.round((size - textH) / 2);
+  for (const ch of text) {
+    const rows = DIGITS[ch];
+    if (rows) {
+      rows.forEach((row, ry) => {
+        for (let rx = 0; rx < 5; rx++) {
+          if (row[rx] !== '1') continue;
+          for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) {
+            set(ox + rx * scale + sx, oy + ry * scale + sy, 0xff, 0xff, 0xff);
+          }
+        }
+      });
+    }
+    ox += 5 * scale + gap;
   }
   return nativeImage.createFromBitmap(buf, { width: size, height: size });
 }
