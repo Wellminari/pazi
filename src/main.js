@@ -436,6 +436,32 @@ function makeBadge(count) {
   return nativeImage.createFromBitmap(buf, { width: size, height: size });
 }
 
+// Ícone do relógio com bolinha vermelha (quando a janela está fechada não existe
+// ícone na barra de tarefas; o relógio é onde a pessoa vê que tem pedido).
+let trayBaseImage = null;
+let trayBadgeImage = null;
+function buildTrayImages() {
+  try {
+    const base = nativeImage.createFromPath(iconPath()).resize({ width: 32, height: 32, quality: 'best' });
+    trayBaseImage = base;
+    const size = base.getSize();
+    const buf = Buffer.from(base.toBitmap()); // BGRA
+    const w = size.width, h = size.height;
+    const r = Math.round(w * 0.24); // raio da bolinha
+    const cx = w - r - 1, cy = r + 1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dx = x - cx + 0.5, dy = y - cy + 0.5;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const i = (y * w + x) * 4;
+        if (d <= r - 0.5) { buf[i] = 0x3c; buf[i + 1] = 0x14; buf[i + 2] = 0xe8; buf[i + 3] = 0xff; }
+        else if (d <= r + 1.2) { buf[i] = 0xff; buf[i + 1] = 0xff; buf[i + 2] = 0xff; buf[i + 3] = 0xff; } // contorno branco
+      }
+    }
+    trayBadgeImage = nativeImage.createFromBitmap(buf, { width: w, height: h });
+  } catch { trayBaseImage = null; trayBadgeImage = null; }
+}
+
 function applyBadge(kind) {
   const win = windows[kind];
   const count = badgeCounts[kind] || 0;
@@ -445,6 +471,8 @@ function applyBadge(kind) {
   if (tray) {
     const total = badgeCounts.panel + badgeCounts.atende;
     tray.setToolTip(total > 0 ? `Pazi — ${badgeCounts.panel} pedido(s), ${badgeCounts.atende} mensagem(ns)` : 'Pazi');
+    if (!trayBaseImage) buildTrayImages();
+    if (trayBaseImage && trayBadgeImage) tray.setImage(total > 0 ? trayBadgeImage : trayBaseImage);
   }
 }
 
