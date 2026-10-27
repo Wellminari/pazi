@@ -6,7 +6,7 @@
 
 const {
   app, BrowserWindow, Tray, Menu, shell, ipcMain, Notification,
-  nativeImage, session, screen,
+  nativeImage, session, screen, powerSaveBlocker, powerMonitor,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -62,6 +62,9 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+// Depois de 5 min escondido o Chromium passa a acordar a página só 1x por minuto
+// (isso derruba a conexão em tempo real dos pedidos). Desliga esse "sono".
+app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling,CalculateNativeWinOcclusion');
 
 // Ícones: Pazi (painel e relógio) e Pazi Atende (janela, barra de tarefas e notificações de mensagem)
 const iconPath = (kind = 'panel') => {
@@ -243,6 +246,14 @@ function createWindow(kind) {
   ['resize', 'move', 'maximize', 'unmaximize'].forEach((ev) => win.on(ev, rememberBounds));
 
   // Sem internet: mostra a tela "Sem conexão" e volta sozinho quando reconectar
+  // Diagnóstico: guarda no registro as mensagens de conexão e de pedidos do painel
+  if (kind === 'panel') {
+    win.webContents.on('console-message', (e, _level, legacyMessage) => {
+      const msg = String((e && e.message) || legacyMessage || '');
+      if (/RealtimeStore\] (Status|Canal|Agendando)|New order detected|Evento orders: INSERT|Playing sound|desktop/i.test(msg)) logPrint(`PAINEL ${msg.slice(0, 200)}`);
+    });
+  }
+
   win.webContents.on('did-finish-load', () => {
     if (updateStatus.state !== 'idle' && isPanelUrl(win.webContents.getURL())) win.webContents.send('pazi:update-status', { ...updateStatus, currentVersion: app.getVersion() });
   });
@@ -380,6 +391,30 @@ function kindOf(webContents) {
     if (windows[k] && windows[k].webContents === webContents) return k;
   }
   return 'panel';
+}
+
+// ---------------------------------------------------------------------------
+// Rede de segurança dos pedidos: mesmo que a conexão em tempo real caia sem avisar
+// (computador dormiu, rede oscilou, Windows economizando energia), a cada 30 s o app
+// pede ao painel para conferir pedidos novos. O painel já trata o evento "online":
+// reconecta se caiu e busca o que entrou desde o último pedido visto.
+// ---------------------------------------------------------------------------
+function pokePanel(reason) {
+  const win = windows.panel;
+  if (!win || win.isDestroyed()) return;
+  const url = win.webContents.getURL();
+  if (!isPanelUrl(url) || win.webContents.isLoading()) return;
+  win.webContents.executeJavaScript("window.dispatchEvent(new Event('online'))", true).catch(() => { /* noop */ });
+  if (reason !== 'timer') logPrint(`PEDIDOS conferência (${reason})`);
+}
+
+let watchdogTimer = null;
+function startOrderWatchdog() {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => pokePanel('timer'), 30 * 1000);
+  // Ao acordar o computador ou voltar a rede: confere na hora
+  powerMonitor.on('resume', () => setTimeout(() => pokePanel('acordou'), 3000));
+  powerMonitor.on('unlock-screen', () => pokePanel('desbloqueou'));
 }
 
 // ---------------------------------------------------------------------------
@@ -790,8 +825,12 @@ app.whenReady().then(() => {
     });
   });
 
+  // Impede o Windows de suspender o app em segundo plano (economia de energia)
+  try { powerSaveBlocker.start('prevent-app-suspension'); } catch { /* noop */ }
+
   createTray();
   createWindow('panel');
+  startOrderWatchdog();
   if (process.argv.includes(cfg.ARG_ATENDE)) showWindow('atende');
 
   checkUpdates(false);
