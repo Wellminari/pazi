@@ -53,4 +53,20 @@ if (location.host === PANEL_HOST) {
     installUpdate: () => ipcRenderer.invoke('pazi:install-update'),
     checkForUpdate: () => ipcRenderer.invoke('pazi:check-update'),
   });
+
+  // Faixa no topo quando a internet cai: a tela continua com os últimos dados.
+  // Some sozinha quando a conexão volta.
+  const BANNER_ID = 'pazi-sem-internet';
+  const showBanner = (online) => {
+    const old = document.getElementById(BANNER_ID);
+    if (online) { if (old) old.remove(); return; }
+    if (old) return;
+    const bar = document.createElement('div');
+    bar.id = BANNER_ID;
+    bar.setAttribute('role', 'status');
+    bar.textContent = 'Sem internet: os dados podem estar desatualizados. O Pazi reconecta sozinho.';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:8px 16px;background:#be185d;color:#fff;font:600 13px/1.4 system-ui,"Segoe UI",sans-serif;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+    (document.body || document.documentElement).appendChild(bar);
+  };
+  ipcRenderer.on('pazi:connection', (_e, state) => showBanner(!!(state && state.online)));
 }
