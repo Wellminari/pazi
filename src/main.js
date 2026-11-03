@@ -6,7 +6,7 @@
 
 const {
   app, BrowserWindow, Tray, Menu, shell, ipcMain, Notification,
-  nativeImage, session, screen, powerSaveBlocker, powerMonitor,
+  nativeImage, session, screen, powerSaveBlocker, powerMonitor, net,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -255,6 +255,7 @@ function createWindow(kind) {
   }
 
   win.webContents.on('did-finish-load', () => {
+    if (!internetOk) win.webContents.send('pazi:connection', { online: false });
     if (updateStatus.state !== 'idle' && isPanelUrl(win.webContents.getURL())) win.webContents.send('pazi:update-status', { ...updateStatus, currentVersion: app.getVersion() });
   });
 
@@ -415,6 +416,50 @@ function startOrderWatchdog() {
   // Ao acordar o computador ou voltar a rede: confere na hora
   powerMonitor.on('resume', () => setTimeout(() => pokePanel('acordou'), 3000));
   powerMonitor.on('unlock-screen', () => pokePanel('desbloqueou'));
+}
+
+// ---------------------------------------------------------------------------
+// Internet de verdade: o Windows pode mostrar Wi-Fi ligado mesmo com o roteador
+// sem internet. A cada 10 s o app tenta falar com o painel; se falhar, avisa as
+// janelas (faixa no topo) sem trocar a tela nem apagar os dados. Ao voltar, o
+// painel confere os pedidos que entraram durante a queda.
+// ---------------------------------------------------------------------------
+let internetOk = true;
+let connectivityTimer = null;
+
+async function probeInternet() {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    await net.fetch(`${cfg.PANEL_ORIGIN}/manifest.json`, { method: 'HEAD', cache: 'no-store', signal: ctrl.signal });
+    return true; // qualquer resposta do servidor prova que há internet
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function sendConnection(online) {
+  for (const k of Object.keys(windows)) {
+    const w = windows[k];
+    if (w && !w.isDestroyed()) w.webContents.send('pazi:connection', { online });
+  }
+}
+
+async function checkConnectivity() {
+  const ok = await probeInternet();
+  if (ok === internetOk) return;
+  internetOk = ok;
+  sendConnection(ok);
+  logPrint(ok ? 'INTERNET voltou' : 'INTERNET caiu (rede ligada, sem internet)');
+  if (ok) pokePanel('internet voltou');
+}
+
+function startConnectivityWatch() {
+  if (connectivityTimer) return;
+  connectivityTimer = setInterval(checkConnectivity, 10 * 1000);
+  powerMonitor.on('resume', () => setTimeout(checkConnectivity, 3000));
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +942,7 @@ app.whenReady().then(() => {
   createTray();
   createWindow('panel');
   startOrderWatchdog();
+  startConnectivityWatch();
   if (process.argv.includes(cfg.ARG_ATENDE)) showWindow('atende');
 
   checkUpdates(false);
