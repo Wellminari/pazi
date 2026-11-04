@@ -915,6 +915,12 @@ autoUpdater.on('update-downloaded', (info) => {
 app.whenReady().then(() => {
   loadSettings();
 
+  // Painel sempre atualizado: limpa o cache da página ao abrir o app, para que
+  // uma atualização publicada no painel apareça sem precisar de Ctrl+Shift+R.
+  // Não apaga login nem dados salvos (cookies e localStorage continuam).
+  session.defaultSession.clearCache().catch(() => { /* noop */ });
+  session.defaultSession.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] }).catch(() => { /* noop */ });
+
   // Permissões: só para o painel do Pazi (notificações, microfone para áudio no Pazi Atende)
   const allowed = new Set(['notifications', 'media', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
