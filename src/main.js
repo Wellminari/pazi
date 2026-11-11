@@ -18,7 +18,7 @@ const cfg = require('./config');
 // Configurações salvas do usuário (tela cheia, iniciar com o Windows)
 // ---------------------------------------------------------------------------
 const settingsFile = () => path.join(app.getPath('userData'), 'pazi-settings.json');
-let settings = { fullscreen: { panel: false, atende: false }, openAtLogin: true, bounds: {} };
+let settings = { fullscreen: { panel: false, atende: false }, openAtLogin: true, bounds: {}, printStation: false };
 
 function loadSettings() {
   try {
@@ -572,8 +572,21 @@ ipcMain.handle('pazi:info', (event) => {
   return {
     isDesktop: true, version: app.getVersion(), platform: process.platform, window: kindOf(event.sender),
     // Recursos desta versão do app (o painel testa antes de usar)
-    features: ['printHtml', 'printRaw', 'printerStatus', 'mediaViewer', 'updates'],
+    features: ['printHtml', 'printRaw', 'printerStatus', 'mediaViewer', 'updates', 'printStation'],
   };
+});
+
+// Estação de impressão: este PC imprime os pedidos da fila do tenant.
+// O painel lê e grava essa escolha; só vale para este computador.
+ipcMain.handle('pazi:get-station', (event) => {
+  assertFromPanel(event);
+  return { isStation: !!settings.printStation };
+});
+ipcMain.handle('pazi:set-station', (event, isStation) => {
+  assertFromPanel(event);
+  settings.printStation = !!isStation;
+  saveSettings();
+  return { isStation: settings.printStation };
 });
 
 // O Windows mantém a impressora "instalada" mesmo desligada/desconectada.
