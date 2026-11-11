@@ -52,6 +52,10 @@ if (location.host === PANEL_HOST) {
     /** Reinicia o app e instala a versão baixada (só funciona com state === 'ready'). */
     installUpdate: () => ipcRenderer.invoke('pazi:install-update'),
     checkForUpdate: () => ipcRenderer.invoke('pazi:check-update'),
+
+    /** Este PC é a estação de impressão do tenant? { isStation } */
+    getStation: () => ipcRenderer.invoke('pazi:get-station'),
+    setStation: (isStation) => ipcRenderer.invoke('pazi:set-station', !!isStation),
   });
 
   // Faixa no topo quando a internet cai: a tela continua com os últimos dados.
