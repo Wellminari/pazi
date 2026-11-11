@@ -720,6 +720,13 @@ ipcMain.handle('pazi:print-raw', async (event, data, options = {}) => {
   if (!deviceName) throw new Error('Escolha a impressora');
   const printers = await event.sender.getPrintersAsync();
   if (!printers.some((p) => p.name === deviceName)) throw new Error('Impressora não encontrada');
+  // O Windows aceita o job mesmo com a impressora desligada e o segura na fila.
+  // Sem essa conferência, o painel marcaria o pedido como impresso antes da hora.
+  const status = await windowsPrinterStatus();
+  const st = status && status.get(deviceName);
+  if (st && (st.WorkOffline || [6, 7].includes(Number(st.PrinterStatus)))) {
+    throw new Error('Impressora desligada ou desconectada. Ligue a impressora e tente de novo.');
+  }
   const copies = Math.max(1, Math.min(10, Number(options.copies) || 1));
   for (let i = 0; i < copies; i++) await sendRawToPrinter(deviceName, buf);
   return { ok: true };
